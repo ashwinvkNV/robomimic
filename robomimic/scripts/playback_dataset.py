@@ -75,6 +75,7 @@ import robomimic.utils.file_utils as FileUtils
 from robomimic.utils.vis_utils import depth_to_rgb
 from robomimic.envs.env_base import EnvBase, EnvType
 
+import torch
 
 # Define default cameras to use for each env type
 DEFAULT_CAMERAS = {
@@ -86,8 +87,7 @@ DEFAULT_CAMERAS = {
 
 def playback_trajectory_with_env(
     env, 
-    initial_state, 
-    states, 
+    demo_group, 
     actions=None, 
     render=False, 
     video_writer=None, 
@@ -119,42 +119,17 @@ def playback_trajectory_with_env(
     assert not (render and write_video)
 
     # load the initial state
+
+    initial_state = demo_group["initial_state"]
     env.reset()
-    env.reset_to(initial_state)
+    env.reset_to(torch.Tensor(initial_state))
 
-    traj_len = states.shape[0]
-    action_playback = (actions is not None)
-    if action_playback:
-        assert states.shape[0] == actions.shape[0]
-
-    for i in range(traj_len):
-        if action_playback:
-            env.step(actions[i])
-            if i < traj_len - 1:
-                # check whether the actions deterministically lead to the same recorded states
-                state_playback = env.get_state()["states"]
-                if not np.all(np.equal(states[i + 1], state_playback)):
-                    err = np.linalg.norm(states[i + 1] - state_playback)
-                    print("warning: playback diverged by {} at step {}".format(err, i))
-        else:
-            env.reset_to({"states" : states[i]})
-
-        # on-screen render
-        if render:
-            env.render(mode="human", camera_name=camera_names[0])
-
-        # video render
-        if write_video:
-            if video_count % video_skip == 0:
-                video_img = []
-                for cam_name in camera_names:
-                    video_img.append(env.render(mode="rgb_array", height=512, width=512, camera_name=cam_name))
-                video_img = np.concatenate(video_img, axis=1) # concatenate horizontally
-                video_writer.append_data(video_img)
-            video_count += 1
-
-        if first:
-            break
+    # replay actions from hdf5 file
+    actions = demo_group["actions"]
+    goal_valid = False
+    for action in actions:
+        action_tensor = torch.Tensor(action).reshape([1, action.shape[0]])
+        observation, reward, done, info = env.step(torch.Tensor(action_tensor))
 
 
 def playback_trajectory_with_obs(
@@ -261,9 +236,11 @@ def playback_dataset(args):
     if write_video:
         video_writer = imageio.get_writer(args.video_path, fps=20)
 
-    for ind in range(len(demos)):
-        ep = demos[ind]
-        print("Playing back episode: {}".format(ep))
+    data_group = f['data']
+    for demo_index, demo_key in enumerate(data_group.keys()):
+        demo_group = data_group[demo_key]
+        print('demo_key')
+        print(demo_key)
 
         if args.use_obs:
             playback_trajectory_with_obs(
@@ -276,21 +253,11 @@ def playback_dataset(args):
             )
             continue
 
-        # prepare initial state to reload from
-        states = f["data/{}/states".format(ep)][()]
-        initial_state = dict(states=states[0])
-        if is_robosuite_env:
-            initial_state["model"] = f["data/{}".format(ep)].attrs["model_file"]
 
-        # supply actions if using open-loop action playback
-        actions = None
-        if args.use_actions:
-            actions = f["data/{}/actions".format(ep)][()]
 
         playback_trajectory_with_env(
             env=env, 
-            initial_state=initial_state, 
-            states=states, actions=actions, 
+            demo_group=demo_group,
             render=args.render, 
             video_writer=video_writer, 
             video_skip=args.video_skip,
