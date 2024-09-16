@@ -7,7 +7,7 @@ import json
 import numpy as np
 from copy import deepcopy
 
-import gym
+import gymnasium as gym
 try:
     import d4rl
 except:
@@ -15,6 +15,8 @@ except:
 
 import robomimic.envs.env_base as EB
 import robomimic.utils.obs_utils as ObsUtils
+from omni.isaac.lab.utils.io import load_pickle
+import os
 
 
 class EnvGym(EB.EnvBase):
@@ -48,7 +50,8 @@ class EnvGym(EB.EnvBase):
         self._current_reward = None
         self._current_done = None
         self._done = None
-        self.env = gym.make(env_name, **kwargs)
+        env_cfg = load_pickle(os.path.join("/home/ashwin/git_cloned/IsaacLab-Internal/logs/robomimic/Isaac-Lift-Cube-Franka-IK-Rel-v0/params", "env.pkl"))
+        self.env = gym.make(env_name, cfg=env_cfg, **kwargs)
 
     def step(self, action):
         """
@@ -63,10 +66,10 @@ class EnvGym(EB.EnvBase):
             done (bool): whether the task is done
             info (dict): extra information
         """
-        obs, reward, done, info = self.env.step(action)
+        obs, reward, terminated, truncated, info = self.env.step(action)
         self._current_obs = obs
         self._current_reward = reward
-        self._current_done = done
+        self._current_done = (terminated | truncated)
         return self.get_observation(obs), reward, self.is_done(), info
 
     def reset(self):
@@ -96,6 +99,9 @@ class EnvGym(EB.EnvBase):
             self.env.unwrapped.sim.set_state_from_flattened(state["states"])
             self.env.unwrapped.sim.forward()
             return { "flat" : self.env.unwrapped._get_obs() }
+        elif hasattr(self.env, "reset_to"):
+            self.env.reset_to(state)
+            return
         else:
             raise NotImplementedError
 
