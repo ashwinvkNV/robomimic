@@ -17,6 +17,7 @@ import robomimic.envs.env_base as EB
 import robomimic.utils.obs_utils as ObsUtils
 from omni.isaac.lab.utils.io import load_pickle
 import os
+import torch
 
 
 class EnvGym(EB.EnvBase):
@@ -66,6 +67,13 @@ class EnvGym(EB.EnvBase):
             done (bool): whether the task is done
             info (dict): extra information
         """
+        if not isinstance(action, torch.Tensor):
+            action = torch.tensor(action)
+        if action.dim() == 1 and action.size(0) == 7:
+            action = action.unsqueeze(0)  # Reshape to [1, 7]
+        else:
+            # Optionally, handle cases where the action is not a 1D tensor of size 7
+            raise ValueError("Action must be a 1D tensor with 7 elements")
         obs, reward, terminated, truncated, info = self.env.step(action)
         self._current_obs = obs
         self._current_reward = reward
@@ -138,10 +146,10 @@ class EnvGym(EB.EnvBase):
         """
         Get current environment simulator state as a dictionary. Should be compatible with @reset_to.
         """
-        # NOTE: assumes MuJoCo gym task!
-        xml = self.env.sim.model.get_xml() # model xml file
-        state = np.array(self.env.sim.get_state().flatten()) # simulator state
-        return dict(model=xml, states=state)
+        assert self._current_obs is not None
+        assert self._current_obs is not None
+        obs = self._current_obs
+        return dict(states=obs)
 
     def get_reward(self):
         """
