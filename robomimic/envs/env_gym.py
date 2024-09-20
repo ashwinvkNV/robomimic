@@ -185,9 +185,10 @@ class EnvGym(EB.EnvBase):
         """
         if hasattr(self.env.unwrapped, "_check_success"):
             return self.env.unwrapped._check_success()
+        
+        lifted = self.env.scene["object"].data.root_pos_w[:, 2].cpu().numpy()[0] > 0.1
 
-        # gym envs generally don't check task success - we only compare returns
-        return { "task" : False }
+        return { "task" : lifted }
 
     @property
     def action_dimension(self):
