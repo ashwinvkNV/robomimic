@@ -19,6 +19,10 @@ from omni.isaac.lab.utils.io import load_pickle
 import os
 import torch
 
+from omni.isaac.lab_tasks.manager_based.manipulation.stack import mdp
+from omni.isaac.lab.managers import SceneEntityCfg
+from omni.isaac.lab.managers import EventTermCfg as EventTerm
+
 
 class EnvGym(EB.EnvBase):
     """Wrapper class for gym"""
@@ -51,7 +55,29 @@ class EnvGym(EB.EnvBase):
         self._current_reward = None
         self._current_done = None
         self._done = None
-        env_cfg = load_pickle(os.path.join("/home/ashwin/git_cloned/IsaacLab-Internal/logs/robomimic/Isaac-Lift-Cube-Franka-IK-Rel-v0/params", "env.pkl"))
+        # TODO: Automatically load the config as per env
+        # env_cfg = load_pickle(os.path.join("/home/ashwin/git_cloned/IsaacLab-Internal/logs/robomimic/Isaac-Lift-Cube-Franka-IK-Rel-v0/params", "env.pkl"))
+        env_cfg = load_pickle(os.path.join("/home/ashwin/git_cloned/IsaacLab-Internal/logs/robomimic/Isaac-Stack-Cube-Franka-IK-Rel-v0/params", "env.pkl"))
+        
+        # TODO: Enable randomization configuration during data generation
+        env_cfg.events.randomize_franka_joint_state = EventTerm(
+            func=mdp.reset_joints_by_offset,
+            mode="reset",
+            params={
+                "position_range": (-0.4, 0.4),
+                "velocity_range": (0, 0),
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+        randomization_range_top = 0.05
+        randomization_range_bottom = -0.05
+        env_cfg.events.randomize_cube_1_position.params["pose_range"]["x"] = (randomization_range_bottom, randomization_range_top)
+        env_cfg.events.randomize_cube_1_position.params["pose_range"]["y"] = (randomization_range_bottom, randomization_range_top)
+        env_cfg.events.randomize_cube_2_position.params["pose_range"]["x"] = (randomization_range_bottom, randomization_range_top)
+        env_cfg.events.randomize_cube_2_position.params["pose_range"]["y"] = (randomization_range_bottom, randomization_range_top)
+        env_cfg.events.randomize_cube_3_position.params["pose_range"]["x"] = (randomization_range_bottom, randomization_range_top)
+        env_cfg.events.randomize_cube_3_position.params["pose_range"]["y"] = (randomization_range_bottom, randomization_range_top)
+
         self.env = gym.make(env_name, cfg=env_cfg, **kwargs)
 
     def step(self, action):
@@ -186,7 +212,34 @@ class EnvGym(EB.EnvBase):
         if hasattr(self.env.unwrapped, "_check_success"):
             return self.env.unwrapped._check_success()
         
-        lifted = self.env.scene["object"].data.root_pos_w[:, 2].cpu().numpy()[0] > 0.1
+        # TODO: Find a better way to check for scene is lift or stack scene
+        
+        if "object" in self.env.scene.keys():
+            lifted = self.env.scene["object"].data.root_pos_w[:, 2].cpu().numpy()[0] > 0.1
+        else:
+            xy_threshold = 0.03
+            height_threshold = 0.005
+            height_diff = 0.0468
+            cube_1: RigidObject = self.env.scene["cube_1"]
+            cube_2: RigidObject = self.env.scene["cube_2"]
+            cube_3: RigidObject = self.env.scene["cube_3"]
+
+            pos_diff_c12 = cube_1.data.root_pos_w - cube_2.data.root_pos_w
+            pos_diff_c23 = cube_2.data.root_pos_w - cube_3.data.root_pos_w
+
+            # Compute cube position difference in x-y plane
+            xy_dist_c12 = torch.norm(pos_diff_c12[:, :2], dim=1)
+            xy_dist_c23 = torch.norm(pos_diff_c23[:, :2], dim=1)
+
+            # Compute cube height difference
+            h_dist_c12 = torch.norm(pos_diff_c12[:, 2:], dim=1)
+            h_dist_c23 = torch.norm(pos_diff_c23[:, 2:], dim=1)
+
+            stacked = torch.logical_and(xy_dist_c12 < xy_threshold, xy_dist_c23 < xy_threshold)
+            stacked = torch.logical_and(torch.norm(h_dist_c12 - height_diff) < height_threshold, stacked)
+            stacked = torch.logical_and(torch.norm(h_dist_c23 - height_diff) < height_threshold, stacked)
+            # return stacked
+            return { "task" : torch.any(stacked).item() }
 
         return { "task" : lifted }
 
